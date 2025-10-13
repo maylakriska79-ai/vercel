@@ -897,12 +897,13 @@ const LAMBDA_SIZE_LIMIT_MB = 250;
 
 function printFileSizeBreakdown(files: Map<string, number>, cwd: string): void {
   // Group files by package or directory structure
-  // This matches Next.js's approach: simple first 3 segments for all files
+  // Files Map uses bundlePath (keys from .vc-config.json) not source paths
   const dependencies = new Map<string, number>();
 
-  for (const [filePath, sizeMB] of files.entries()) {
-    const relativePath = relative(cwd, filePath);
-    const depKey = relativePath.split('/').slice(0, 3).join('/');
+  for (const [bundlePath, sizeMB] of files.entries()) {
+    // bundlePath is already the function-relative path (e.g., "_vendor/absl_py-2.3.1.dist-info/INSTALLER")
+    // Use first 3 segments to group
+    const depKey = bundlePath.split('/').slice(0, 3).join('/');
 
     dependencies.set(depKey, (dependencies.get(depKey) || 0) + sizeMB);
   }
@@ -1008,11 +1009,15 @@ async function analyzeSingleFunction(
     const parsed = JSON.parse(content);
 
     // Extract file paths from .vc-config.json
+    // Keep both keys (bundle paths) and values (source paths)
     const filePathMap =
       parsed.filePathMap && typeof parsed.filePathMap === 'object'
-        ? Object.values(parsed.filePathMap)
-            .filter((x): x is string => typeof x === 'string')
-            .map(x => join(cwd, x))
+        ? Object.entries(parsed.filePathMap)
+            .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+            .map(([bundlePath, sourcePath]) => ({
+              bundlePath,
+              sourcePath: join(cwd, sourcePath),
+            }))
         : [];
 
     const stats = getTotalFileSizeInMB(filePathMap);
@@ -1029,20 +1034,23 @@ async function analyzeSingleFunction(
   }
 }
 
-function getTotalFileSizeInMB(files: string[]): {
+function getTotalFileSizeInMB(
+  files: Array<{ bundlePath: string; sourcePath: string }>
+): {
   size: number;
   files: Map<string, number>;
 } {
   let size = 0;
   const filesSizeMap = new Map<string, number>();
 
-  for (const file of files) {
+  for (const { bundlePath, sourcePath } of files) {
     try {
-      const stats = statSync(file);
+      const stats = statSync(sourcePath);
       if (stats.isFile()) {
         const fileSizeMB = stats.size / (1024 * 1024);
         size += fileSizeMB;
-        filesSizeMap.set(file, fileSizeMB);
+        // Use bundlePath (the key) for the map, not sourcePath
+        filesSizeMap.set(bundlePath, fileSizeMB);
       }
     } catch {
       // File doesn't exist or can't be accessed
