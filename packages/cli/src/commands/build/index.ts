@@ -895,6 +895,37 @@ function getFunctionUrlPath(vcConfigPath: string, outputDir: string): string {
 
 const LAMBDA_SIZE_LIMIT_MB = 250;
 
+function printFileSizeBreakdown(files: Map<string, number>, cwd: string): void {
+  // Group files by package or directory structure
+  // This matches Next.js's approach: simple first 3 segments for all files
+  const dependencies = new Map<string, number>();
+
+  for (const [filePath, sizeMB] of files.entries()) {
+    const relativePath = relative(cwd, filePath);
+    const depKey = relativePath.split('/').slice(0, 3).join('/');
+
+    dependencies.set(depKey, (dependencies.get(depKey) || 0) + sizeMB);
+  }
+
+  // Sort by size and show top 10 largest dependencies
+  const sortedDeps = Array.from(dependencies.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  if (sortedDeps.length > 0) {
+    output.print(chalk.yellow('  Largest dependencies:\n'));
+    for (const [dep, size] of sortedDeps) {
+      if (size >= 0.5) {
+        // Only show files >= 500KB
+        output.print(
+          `    ${chalk.gray('•')} ${dep}: ${chalk.bold(size.toFixed(2))} MB\n`
+        );
+      }
+    }
+    output.print('\n');
+  }
+}
+
 async function analyzeVcConfigFiles(
   cwd: string,
   outputDir: string
@@ -940,6 +971,9 @@ async function analyzeVcConfigFiles(
           `${chalk.red.bold(result.size.toFixed(2))} MB ` +
           `${chalk.red.bold(`⚠️  Exceeds ${LAMBDA_SIZE_LIMIT_MB} MB uncompressed limit`)}\n`
       );
+
+      // Show breakdown of largest files/dependencies
+      printFileSizeBreakdown(result.files, cwd);
     } else {
       output.print(
         `${chalk.cyan(result.path)}: ` +
@@ -964,7 +998,11 @@ async function analyzeSingleFunction(
   file: string,
   cwd: string,
   outputDir: string
-): Promise<{ path: string; size: number } | null> {
+): Promise<{
+  path: string;
+  size: number;
+  files: Map<string, number>;
+} | null> {
   try {
     const content = await fs.readFile(file, 'utf8');
     const parsed = JSON.parse(content);
@@ -983,6 +1021,7 @@ async function analyzeSingleFunction(
     return {
       path: functionUrlPath,
       size: stats.size,
+      files: stats.files,
     };
   } catch (error) {
     output.warn(`Failed to analyze ${file}: ${error}`);
@@ -990,21 +1029,27 @@ async function analyzeSingleFunction(
   }
 }
 
-function getTotalFileSizeInMB(files: string[]): { size: number } {
+function getTotalFileSizeInMB(files: string[]): {
+  size: number;
+  files: Map<string, number>;
+} {
   let size = 0;
+  const filesSizeMap = new Map<string, number>();
 
   for (const file of files) {
     try {
       const stats = statSync(file);
       if (stats.isFile()) {
-        size += stats.size / (1024 * 1024);
+        const fileSizeMB = stats.size / (1024 * 1024);
+        size += fileSizeMB;
+        filesSizeMap.set(file, fileSizeMB);
       }
     } catch {
       // File doesn't exist or can't be accessed
     }
   }
 
-  return { size };
+  return { size, files: filesSizeMap };
 }
 
 async function getFramework(
