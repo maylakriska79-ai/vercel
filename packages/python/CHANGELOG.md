@@ -1,5 +1,11 @@
 # @vercel/python
 
+## 6.0.1
+
+### Patch Changes
+
+- [python] allow arbitrary entrypoints in pyproject.toml ([#14181](https://github.com/vercel/vercel/pull/14181))
+
 ## 6.0.0
 
 ### Major Changes
